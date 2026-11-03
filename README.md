@@ -7,6 +7,29 @@ Everything runs on this Mac, on the Neural Engine. The only network access
 Murmur ever makes is a one-time model download on first launch — after that
 it works with the Wi-Fi off.
 
+## Why not just use Apple's Dictation?
+
+Fair question — macOS already has one built in. Two concrete differences:
+
+- **Push-to-talk.** Apple's dictation shortcut is customizable, but it's
+  toggle-only: press to start, and it stops on its own after a pause. Murmur
+  listens only while you hold the key down, so it never catches a sentence
+  you didn't mean to dictate.
+- **Unconditionally local.** Apple's on-device claim is real, but conditional:
+  it only runs locally on Apple Silicon, and only in the languages Apple
+  supports for on-device processing — otherwise, or on an Intel Mac, your
+  audio [goes to Apple's servers](https://support.apple.com/guide/mac-help/use-dictation-mh40584/mac).
+  Murmur runs the same open-source Parakeet model locally on any Apple
+  Silicon Mac, in any of the ~25 languages it supports, full stop — and the
+  whole pipeline is open source, so that claim is checkable rather than
+  taken on faith.
+
+On raw accuracy, Parakeet TDT is independently benchmarked — v2 scores
+~6% WER on the [Open ASR Leaderboard](https://huggingface.co/spaces/hf-audio/open_asr_leaderboard),
+the first model to break the 7% barrier there. Apple doesn't publish
+comparable numbers for Dictation, so there's no honest head-to-head claim
+to make on that front.
+
 ## Install
 
 1. Download `Murmur.dmg` from [Releases](../../releases/latest).
