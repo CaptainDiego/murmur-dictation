@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds Murmur.app. Pass --install to also copy it into /Applications.
+# Builds Murmur.app. Pass --install to copy it into /Applications, or
+# --dmg to produce a drag-to-install disk image under dist/.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -16,7 +17,7 @@ echo "==> Assembling bundle"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
-strip -x "$APP/Contents/MacOS/$APP_NAME" 2>/dev/null || true
+strip -rSTx "$APP/Contents/MacOS/$APP_NAME" 2>/dev/null || true
 
 echo "==> Generating icon"
 swift "$ROOT/Tools/make-icon.swift" "$APP/Contents/Resources/AppIcon.icns" >/dev/null 2>&1 \
@@ -60,4 +61,17 @@ if [[ "${1:-}" == "--install" ]]; then
     rm -rf "/Applications/$APP_NAME.app"
     cp -R "$APP" "/Applications/$APP_NAME.app"
     echo "==> Installed. Launch with: open -a $APP_NAME"
+fi
+
+if [[ "${1:-}" == "--dmg" ]]; then
+    echo "==> Building disk image"
+    DMG="$ROOT/dist/$APP_NAME.dmg"
+    STAGE="$ROOT/dist/.dmg-stage"
+    rm -rf "$STAGE" "$DMG"
+    mkdir -p "$STAGE"
+    cp -R "$APP" "$STAGE/"
+    ln -s /Applications "$STAGE/Applications"
+    hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+    rm -rf "$STAGE"
+    echo "==> Built $DMG ($(du -sh "$DMG" | cut -f1))"
 fi
