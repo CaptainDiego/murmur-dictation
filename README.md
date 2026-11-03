@@ -1,4 +1,4 @@
-# Murmur
+# 🫦 Murmur
 
 A menu bar speech-to-text app for macOS. Hold **⌥D**, talk, let go — the text
 is pasted wherever your cursor is. The shortcut is yours to change in Settings.
