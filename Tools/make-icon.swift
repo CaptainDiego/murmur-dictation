@@ -33,7 +33,7 @@ func render(size: Int) -> Data? {
 
     let glyphConfig = NSImage.SymbolConfiguration(
         pointSize: side * 0.46, weight: .semibold)
-    if let glyph = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: nil)?
+    if let glyph = NSImage(systemSymbolName: "mouth.fill", accessibilityDescription: nil)?
         .withSymbolConfiguration(glyphConfig)
     {
         let tinted = NSImage(size: glyph.size, flipped: false) { bounds in

@@ -1,7 +1,7 @@
 # Murmur
 
-A menu bar speech-to-text app for macOS. Hold the **Fn / 🌐 Globe** key, talk,
-let go — the text is pasted wherever your cursor is.
+A menu bar speech-to-text app for macOS. Hold **⌥D**, talk, let go — the text
+is pasted wherever your cursor is. The shortcut is yours to change in Settings.
 
 Everything runs on this Mac, on the Neural Engine. The only network access
 Murmur ever makes is a one-time model download on first launch — after that
@@ -17,30 +17,27 @@ it works with the Wi-Fi off.
 4. Grant the **Microphone** and **Accessibility** prompts when they appear —
    both are required.
 
-The app has no dock icon; look for the microphone in the menu bar. It
-registers itself to launch at login and downloads the model (~470 MB) on
-first run.
-
-### Free up the Globe key
-
-macOS binds Fn / 🌐 to its own action by default. Set **System Settings ›
-Keyboard › "Press 🌐 key to"** to **"Do Nothing"**, otherwise Apple's own
-dictation or input-switcher fires alongside Murmur. Settings warns you if
-this is still on.
+The app has no dock icon; look for it in the menu bar. It registers itself to
+launch at login and downloads the model (~470 MB) on first run.
 
 ## Using it
 
-Hold **Fn**, speak, release. The transcript is pasted into the frontmost app
+Hold **⌥D**, speak, release. The transcript is pasted into the frontmost app
 and your previous clipboard contents are restored a moment later. A tap
 under 0.2 s is ignored, so brushing the key does nothing.
+
+Want a different shortcut? Open **Settings** from the menu bar icon and set
+any key or key combination — including a lone modifier like Fn, if you'd
+rather free up both hands from needing a letter key.
 
 ## Settings
 
 Open from the menu bar icon:
 
-- **Shortcut** — a single modifier (Fn, either Option, Right Command, Right
-  Control) or any key combination. A lone modifier needs Accessibility; a
-  combination such as ⌃⌥D doesn't.
+- **Shortcut** — any key combination (like the default ⌥D), or a single
+  modifier on its own (Fn, either Option, Right Command, Right Control). A
+  combination needs no extra permission; a lone modifier needs Accessibility
+  to be heard system-wide.
 - **Activation** — hold to talk, or press once to start and again to stop.
 - **Model** — see [Choosing a model](#choosing-a-model) below. Switching
   re-downloads.

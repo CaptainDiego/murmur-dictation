@@ -97,7 +97,7 @@ enum Trigger: Equatable {
 
     static let fallback = Trigger.combo(
         keyCode: UInt16(kVK_ANSI_D),
-        carbonModifiers: UInt32(controlKey | optionKey)
+        carbonModifiers: UInt32(optionKey)
     )
 
     /// Human-readable form for menus, e.g. "⌃⌥D".
@@ -141,11 +141,12 @@ final class Settings {
 
     private init() {
         defaults.register(defaults: [
-            // Hold the Fn / Globe key to talk: the microphone is live only
-            // while the key is physically down.
-            Key.triggerKind: "modifier",
-            Key.triggerKeyCode: Int(ModifierKey.fn.rawValue),
-            Key.triggerModifiers: 0,
+            // Hold ⌥D to talk. A combo needs no Accessibility permission to
+            // listen for, so dictation works the moment the app launches;
+            // the user can switch to Fn or any other key in Settings.
+            Key.triggerKind: "combo",
+            Key.triggerKeyCode: Int(kVK_ANSI_D),
+            Key.triggerModifiers: Int(optionKey),
             Key.activationMode: ActivationMode.hold.rawValue,
             Key.outputMode: OutputMode.paste.rawValue,
             Key.model: ModelChoice.v3.rawValue,
