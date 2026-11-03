@@ -1,0 +1,100 @@
+import AppKit
+import Carbon.HIToolbox
+
+/// Delivers the finished transcript, either onto the clipboard or straight
+/// into whatever the user was typing in.
+@MainActor
+enum Paster {
+    /// Puts `text` on the clipboard and, in paste mode, synthesises ⌘V.
+    /// Returns false when pasting was wanted but Accessibility is missing,
+    /// in which case the text is still on the clipboard.
+    @discardableResult
+    static func deliver(_ text: String, mode: OutputMode) -> Bool {
+        guard !text.isEmpty else { return true }
+
+        switch mode {
+        case .copyOnly:
+            copy(text)
+            return true
+        case .paste:
+            guard Permissions.hasAccessibility else {
+                copy(text)
+                return false
+            }
+            pasteRestoringClipboard(text)
+            return true
+        }
+    }
+
+    private static func copy(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    /// Pastes via the clipboard, then puts the previous contents back so the
+    /// user does not lose whatever they had copied.
+    private static func pasteRestoringClipboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        let saved = snapshot(of: pasteboard)
+
+        copy(text)
+        sendCommandV()
+
+        // The paste is asynchronous in the receiving app, so give it a moment
+        // before handing the clipboard back.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            restore(saved, to: pasteboard)
+        }
+    }
+
+    private static func snapshot(of pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
+        guard let items = pasteboard.pasteboardItems else { return [] }
+        return items.map { item in
+            var copied: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copied[type] = data
+                }
+            }
+            return copied
+        }
+    }
+
+    private static func restore(
+        _ snapshot: [[NSPasteboard.PasteboardType: Data]], to pasteboard: NSPasteboard
+    ) {
+        pasteboard.clearContents()
+        guard !snapshot.isEmpty else { return }
+        let items = snapshot.map { stored -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for (type, data) in stored {
+                item.setData(data, forType: type)
+            }
+            return item
+        }
+        pasteboard.writeObjects(items)
+    }
+
+    private static func sendCommandV() {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        // Suppress the app's own events from being fed back to it.
+        source?.setLocalEventsFilterDuringSuppressionState(
+            [.permitLocalMouseEvents, .permitSystemDefinedEvents],
+            state: .eventSuppressionStateSuppressionInterval
+        )
+
+        let key = CGKeyCode(kVK_ANSI_V)
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true),
+            let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)
+        else { return }
+
+        // Set the flags explicitly so a modifier the user is still holding
+        // (common in hold-to-talk) cannot turn this into ⌥⌘V.
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+    }
+}

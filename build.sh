@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Builds Murmur.app. Pass --install to also copy it into /Applications.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+APP_NAME="Murmur"
+BUNDLE_ID="com.murmur.dictation"
+VERSION="1.0.0"
+APP="$ROOT/dist/$APP_NAME.app"
+
+echo "==> Building release binary"
+swift build -c release --package-path "$ROOT"
+BIN="$(swift build -c release --package-path "$ROOT" --show-bin-path)/$APP_NAME"
+
+echo "==> Assembling bundle"
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
+strip -x "$APP/Contents/MacOS/$APP_NAME" 2>/dev/null || true
+
+echo "==> Generating icon"
+swift "$ROOT/Tools/make-icon.swift" "$APP/Contents/Resources/AppIcon.icns" >/dev/null 2>&1 \
+  || echo "    (icon generation skipped)"
+
+cat > "$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>                  <string>${APP_NAME}</string>
+    <key>CFBundleDisplayName</key>           <string>${APP_NAME}</string>
+    <key>CFBundleExecutable</key>            <string>${APP_NAME}</string>
+    <key>CFBundleIdentifier</key>            <string>${BUNDLE_ID}</string>
+    <key>CFBundleIconFile</key>              <string>AppIcon</string>
+    <key>CFBundlePackageType</key>           <string>APPL</string>
+    <key>CFBundleShortVersionString</key>    <string>${VERSION}</string>
+    <key>CFBundleVersion</key>               <string>${VERSION}</string>
+    <key>LSMinimumSystemVersion</key>        <string>15.0</string>
+    <key>LSUIElement</key>                   <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Murmur transcribes your speech on this Mac. Audio never leaves the device.</string>
+    <key>NSHumanReadableCopyright</key>      <string>Local speech to text.</string>
+</dict>
+</plist>
+PLIST
+
+echo "==> Signing (ad-hoc)"
+codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
+codesign --verify --verbose=1 "$APP" 2>&1 | sed 's/^/    /'
+
+echo "==> Built $APP ($(du -sh "$APP" | cut -f1))"
+
+if [[ "${1:-}" == "--install" ]]; then
+    echo "==> Installing to /Applications"
+    if pgrep -x "$APP_NAME" >/dev/null; then
+        echo "    quitting running instance"
+        pkill -x "$APP_NAME" || true
+        sleep 1
+    fi
+    rm -rf "/Applications/$APP_NAME.app"
+    cp -R "$APP" "/Applications/$APP_NAME.app"
+    echo "==> Installed. Launch with: open -a $APP_NAME"
+fi
