@@ -119,7 +119,6 @@ final class HotkeyListener {
     // MARK: - Lone modifier
 
     private func registerModifierWatch(_ key: ModifierKey) -> Bool {
-        NSLog("Murmur[hotkey]: registerModifierWatch(\(key)) — hasAccessibility=\(Permissions.hasAccessibility)")
         guard Permissions.hasAccessibility else { return false }
 
         let relevant: NSEvent.ModifierFlags = [.command, .control, .option, .shift, .function]
@@ -129,7 +128,6 @@ final class HotkeyListener {
             guard let self else { return }
             MainActor.assumeIsolated {
                 let held = event.modifierFlags.intersection(relevant)
-                NSLog("Murmur[hotkey]: flagsChanged keyCode=\(event.keyCode) flags=\(event.modifierFlags.rawValue) held=\(held.rawValue)")
 
                 guard event.keyCode == key.rawValue else {
                     // Some other modifier moved. If that happened mid-hold the
@@ -166,9 +164,7 @@ final class HotkeyListener {
             }
         }
 
-        let installed = flagsMonitor != nil
-        NSLog("Murmur[hotkey]: global monitor installed=\(installed)")
-        return installed
+        return flagsMonitor != nil
     }
 }
 
