@@ -3,7 +3,7 @@
 A menu bar speech-to-text app for macOS. Hold **⌥D**, talk, let go — the text
 is pasted wherever your cursor is. The shortcut is yours to change in Settings.
 
-Everything runs on this Mac, on the Neural Engine. The only network access
+Everything runs on your Mac, on the Neural Engine. The only network access
 Murmur ever makes is a one-time model download on first launch — after that
 it works with the Wi-Fi off.
 
