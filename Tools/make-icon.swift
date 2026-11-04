@@ -26,29 +26,20 @@ func render(size: Int) -> Data? {
     let background = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
     let gradient = NSGradient(
         colors: [
-            NSColor(calibratedRed: 0.21, green: 0.52, blue: 0.98, alpha: 1),
-            NSColor(calibratedRed: 0.36, green: 0.27, blue: 0.90, alpha: 1),
+            NSColor(calibratedRed: 0.18, green: 0.18, blue: 0.20, alpha: 1),
+            NSColor(calibratedRed: 0.04, green: 0.04, blue: 0.05, alpha: 1),
         ])
     gradient?.draw(in: background, angle: -90)
 
-    let glyphConfig = NSImage.SymbolConfiguration(
-        pointSize: side * 0.46, weight: .semibold)
-    if let glyph = NSImage(systemSymbolName: "mouth.fill", accessibilityDescription: nil)?
-        .withSymbolConfiguration(glyphConfig)
-    {
-        let tinted = NSImage(size: glyph.size, flipped: false) { bounds in
-            NSColor.white.set()
-            bounds.fill()
-            glyph.draw(in: bounds, from: .zero, operation: .destinationIn, fraction: 1)
-            return true
-        }
-        let target = NSRect(
-            x: (side - tinted.size.width) / 2,
-            y: (side - tinted.size.height) / 2,
-            width: tinted.size.width,
-            height: tinted.size.height)
-        tinted.draw(in: target)
-    }
+    // The 🫦 emoji, drawn with Apple Color Emoji and centred on the tile.
+    let emoji = "\u{1FAE6}" as NSString
+    let font = NSFont(name: "AppleColorEmoji", size: side * 0.56)
+        ?? NSFont.systemFont(ofSize: side * 0.56)
+    let attributes: [NSAttributedString.Key: Any] = [.font: font]
+    let glyphSize = emoji.size(withAttributes: attributes)
+    emoji.draw(
+        at: NSPoint(x: (side - glyphSize.width) / 2, y: (side - glyphSize.height) / 2),
+        withAttributes: attributes)
 
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])
