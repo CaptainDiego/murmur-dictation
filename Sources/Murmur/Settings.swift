@@ -137,6 +137,7 @@ final class Settings {
         static let playSounds = "playSounds"
         static let trimTrailingNewline = "trimTrailingNewline"
         static let didFirstRun = "didFirstRun"
+        static let historySize = "historySize"
     }
 
     private init() {
@@ -152,6 +153,7 @@ final class Settings {
             Key.model: ModelChoice.v3.rawValue,
             Key.playSounds: true,
             Key.trimTrailingNewline: true,
+            Key.historySize: 5,
         ])
     }
 
@@ -204,6 +206,15 @@ final class Settings {
     var trimTrailingNewline: Bool {
         get { defaults.bool(forKey: Key.trimTrailingNewline) }
         set { defaults.set(newValue, forKey: Key.trimTrailingNewline) }
+    }
+
+    /// How many recent transcripts the menu keeps (in memory only).
+    var historySize: Int {
+        get {
+            let value = defaults.integer(forKey: Key.historySize)
+            return TranscriptHistory.sizes.contains(value) ? value : TranscriptHistory.sizes[0]
+        }
+        set { defaults.set(newValue, forKey: Key.historySize) }
     }
 
     /// False until the app has finished its one-time setup.

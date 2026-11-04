@@ -8,6 +8,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     private let modePopup = NSPopUpButton()
     private let outputPopup = NSPopUpButton()
     private let modelPopup = NSPopUpButton()
+    private let historyPopup = NSPopUpButton()
     private let soundsCheckbox = NSButton(checkboxWithTitle: "Play a sound when recording starts", target: nil, action: nil)
     private let loginCheckbox = NSButton(checkboxWithTitle: "Launch Murmur at login", target: nil, action: nil)
     private let micStatusLabel = NSTextField(labelWithString: "")
@@ -19,7 +20,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 540, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 540, height: 580),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -126,8 +127,15 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         outputPopup.action = #selector(outputChanged)
         stack.addArrangedSubview(row("Transcript", outputPopup, width: 300))
 
+        for size in TranscriptHistory.sizes {
+            historyPopup.addItem(withTitle: "Last \(size) dictations")
+        }
+        historyPopup.target = self
+        historyPopup.action = #selector(historyChanged)
+        stack.addArrangedSubview(row("Recent", historyPopup, width: 200))
+
         stack.addArrangedSubview(
-            hint("The model is downloaded once, then everything runs on the Neural Engine. Murmur makes no network calls while transcribing."))
+            hint("Recent dictations are kept in memory only and are forgotten when Murmur quits. The model is downloaded once, then everything runs on the Neural Engine. Murmur makes no network calls while transcribing."))
 
         stack.addArrangedSubview(separator())
         stack.addArrangedSubview(sectionTitle("Permissions"))
@@ -216,6 +224,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         modePopup.selectItem(at: ActivationMode.allCases.firstIndex(of: settings.activationMode) ?? 0)
         outputPopup.selectItem(at: OutputMode.allCases.firstIndex(of: settings.outputMode) ?? 0)
         modelPopup.selectItem(at: ModelChoice.allCases.firstIndex(of: settings.model) ?? 0)
+        historyPopup.selectItem(at: TranscriptHistory.sizes.firstIndex(of: settings.historySize) ?? 0)
         soundsCheckbox.state = settings.playSounds ? .on : .off
         loginCheckbox.state = LoginItem.isEnabled ? .on : .off
         refreshPermissions()
@@ -270,6 +279,10 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         guard choice != Settings.shared.model else { return }
         Settings.shared.model = choice
         NotificationCenter.default.post(name: AppDelegate.modelChanged, object: nil)
+    }
+
+    @objc private func historyChanged() {
+        Settings.shared.historySize = TranscriptHistory.sizes[historyPopup.indexOfSelectedItem]
     }
 
     @objc private func soundsChanged() {

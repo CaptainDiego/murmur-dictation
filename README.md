@@ -65,6 +65,9 @@ Open from the menu bar icon:
 - **Model** — see [Choosing a model](#choosing-a-model) below. Switching
   re-downloads.
 - **Transcript** — paste at the cursor, or only copy to the clipboard.
+- **Recent** — keep your last 5, 10 or 25 dictations in the menu bar menu;
+  click one to copy it again. Held in memory only, so they're gone when
+  Murmur quits.
 - **Launch at login** — on by default.
 
 ## Choosing a model

@@ -24,7 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var preferences: PreferencesWindowController?
 
     private var state: AppState = .preparing("Starting…") { didSet { refreshStatusIcon() } }
-    private var lastTranscript = ""
+    private var history = TranscriptHistory(capacity: Settings.shared.historySize)
     private var recordingStartedAt: Date?
     /// Guards against a release arriving after we already stopped.
     private var isCapturing = false
@@ -274,7 +274,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
 
-        lastTranscript = text
+        history.capacity = Settings.shared.historySize
+        history.add(text)
         let delivered = Paster.deliver(text, mode: Settings.shared.outputMode)
         if delivered {
             state = .ready
@@ -398,19 +399,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mode.isEnabled = false
         menu.addItem(mode)
 
-        if !lastTranscript.isEmpty {
+        history.capacity = Settings.shared.historySize
+        if !history.isEmpty {
             menu.addItem(.separator())
-            let preview = lastTranscript.count > 48
-                ? String(lastTranscript.prefix(48)) + "…"
-                : lastTranscript
-            let header = NSMenuItem(title: "Last: \(preview)", action: nil, keyEquivalent: "")
+            let header = NSMenuItem(title: "Recent — click to copy", action: nil, keyEquivalent: "")
             header.isEnabled = false
             menu.addItem(header)
 
-            let copyItem = NSMenuItem(
-                title: "Copy Last Transcript", action: #selector(copyLast), keyEquivalent: "")
-            copyItem.target = self
-            menu.addItem(copyItem)
+            for (index, text) in history.items.enumerated() {
+                let item = NSMenuItem(
+                    title: TranscriptHistory.preview(text), action: #selector(copyFromHistory(_:)),
+                    keyEquivalent: index < 9 ? String(index + 1) : "")
+                item.target = self
+                item.tag = index
+                item.toolTip = text
+                menu.addItem(item)
+            }
+
+            let clear = NSMenuItem(
+                title: "Clear Recent", action: #selector(clearHistory), keyEquivalent: "")
+            clear.target = self
+            menu.addItem(clear)
         }
 
         menu.addItem(.separator())
@@ -429,10 +438,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         isCapturing ? stopAndTranscribe() : startCapture()
     }
 
-    @objc private func copyLast() {
-        guard !lastTranscript.isEmpty else { return }
+    @objc private func copyFromHistory(_ sender: NSMenuItem) {
+        guard history.items.indices.contains(sender.tag) else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(lastTranscript, forType: .string)
+        NSPasteboard.general.setString(history.items[sender.tag], forType: .string)
+    }
+
+    @objc private func clearHistory() {
+        history.clear()
     }
 
     @objc private func openAccessibility() {
