@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="Murmur"
 BUNDLE_ID="com.murmur.dictation"
-VERSION="1.0.0"
+VERSION="1.2.0"
 APP="$ROOT/dist/$APP_NAME.app"
 
 echo "==> Building release binary"
