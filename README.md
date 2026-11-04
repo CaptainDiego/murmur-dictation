@@ -67,7 +67,8 @@ Open from the menu bar icon:
 - **Transcript** — paste at the cursor, or only copy to the clipboard.
 - **Recent** — keep your last 5, 10 or 25 dictations in the menu bar menu;
   click one to copy it again. Held in memory only, so they're gone when
-  Murmur quits.
+  Murmur quits. Pasted dictations are marked as temporary on the clipboard,
+  so clipboard managers like Raycast or Maccy don't save them.
 - **Launch at login** — on by default.
 
 ## Choosing a model
@@ -95,7 +96,7 @@ project, no Python.
 ./build.sh --dmg         # same, plus dist/Murmur.dmg for distribution
 ```
 
-The app is signed ad-hoc (no Developer ID on this machine), and macOS ties
+The app is signed ad-hoc with the hardened runtime, which blocks other processes from attaching to it or injecting code (no Developer ID on this machine), and macOS ties
 permission grants to the exact signature — **after a rebuild you may have to
 remove Murmur from the Microphone/Accessibility panes and re-add it.**
 Murmur retries in the background once Accessibility is granted, so a restart

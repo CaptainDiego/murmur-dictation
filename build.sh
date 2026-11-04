@@ -45,8 +45,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "==> Signing (ad-hoc)"
-codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
+echo "==> Signing (ad-hoc, hardened runtime)"
+# The hardened runtime stops other processes from attaching a debugger or
+# injecting libraries, either of which could read transcripts from memory.
+codesign --force --sign - --options runtime --entitlements "$ROOT/Murmur.entitlements" \
+    --identifier "$BUNDLE_ID" "$APP"
 codesign --verify --verbose=1 "$APP" 2>&1 | sed 's/^/    /'
 
 echo "==> Built $APP ($(du -sh "$APP" | cut -f1))"
