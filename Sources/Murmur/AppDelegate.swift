@@ -319,16 +319,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func refreshStatusIcon() {
         guard let button = statusItem?.button else { return }
 
+        let description = statusLine
+        button.toolTip = "Murmur — \(description)"
+
         let symbol: String
         var tint: NSColor? = nil
         switch state {
+        case .ready:
+            button.image = Self.lipsImage(recording: false, description: description)
+            button.contentTintColor = nil
+            return
+        case .listening:
+            button.image = Self.lipsImage(recording: true, description: description)
+            button.contentTintColor = nil
+            return
         case .preparing:
             symbol = "arrow.down.circle"
-        case .ready:
-            symbol = "mic"
-        case .listening:
-            symbol = "mic.fill"
-            tint = .systemRed
         case .transcribing:
             symbol = "waveform"
             tint = .systemBlue
@@ -337,11 +343,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             tint = .systemOrange
         }
 
-        let description = statusLine
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
         button.image?.isTemplate = tint == nil
         button.contentTintColor = tint
-        button.toolTip = "Murmur — \(description)"
+    }
+
+    /// The 🫦 emoji sized for the menu bar, with a red dot while recording.
+    private static func lipsImage(recording: Bool, description: String) -> NSImage {
+        let side: CGFloat = 18
+        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { bounds in
+            let emoji = "\u{1FAE6}" as NSString
+            let font = NSFont(name: "AppleColorEmoji", size: 15) ?? NSFont.systemFont(ofSize: 15)
+            let attributes: [NSAttributedString.Key: Any] = [.font: font]
+            let size = emoji.size(withAttributes: attributes)
+            emoji.draw(
+                at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2),
+                withAttributes: attributes)
+            if recording {
+                let dot = NSRect(x: bounds.maxX - 7, y: bounds.maxY - 7, width: 7, height: 7)
+                NSColor.systemRed.setFill()
+                NSBezierPath(ovalIn: dot).fill()
+            }
+            return true
+        }
+        image.isTemplate = false
+        image.accessibilityDescription = description
+        return image
     }
 
     /// macOS can bind the Globe key to input-source switching, emoji or its
