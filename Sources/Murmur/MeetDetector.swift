@@ -72,6 +72,64 @@ enum MeetDetector {
         }
         return nil
     }
+
+    /// Whether any tab of the browser, not just the one in front, is a Meet
+    /// call. Read from the tab strip through Accessibility. Returns nil when
+    /// no tabs could be found at all (no permission, or a browser that lays
+    /// its tab strip out differently), so callers can tell "no Meet tab"
+    /// apart from "can't tell".
+    static func hasMeetTab(in browser: Browser) -> Bool? {
+        guard Permissions.hasAccessibility else { return nil }
+        var sawTabs = false
+        for app in NSRunningApplication.runningApplications(withBundleIdentifier: browser.appBundleID) {
+            let element = AXUIElementCreateApplication(app.processIdentifier)
+            for window in children(of: element, attribute: kAXWindowsAttribute) {
+                var found = false
+                scanTabs(window, depth: 0, sawTabs: &sawTabs, foundMeet: &found)
+                if found { return true }
+            }
+        }
+        return sawTabs ? false : nil
+    }
+
+    /// Walks the window's controls looking for tab buttons. Page content
+    /// (AXWebArea) is skipped: it is large and never holds the tab strip.
+    private static func scanTabs(_ element: AXUIElement, depth: Int, sawTabs: inout Bool, foundMeet: inout Bool) {
+        guard depth < 10, !foundMeet else { return }
+        let role = string(element, kAXRoleAttribute)
+        if role == "AXWebArea" { return }
+        if role == kAXRadioButtonRole as String || role == "AXTab",
+            let parent = parentRole(of: element), parent == kAXTabGroupRole as String
+        {
+            sawTabs = true
+            let title = string(element, kAXTitleAttribute) ?? string(element, kAXDescriptionAttribute) ?? ""
+            if MeetWindow.isMeet(title) { foundMeet = true }
+            return
+        }
+        for child in children(of: element, attribute: kAXChildrenAttribute) {
+            scanTabs(child, depth: depth + 1, sawTabs: &sawTabs, foundMeet: &foundMeet)
+        }
+    }
+
+    private static func parentRole(of element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &value) == .success,
+            let value, CFGetTypeID(value) == AXUIElementGetTypeID()
+        else { return nil }
+        return string(value as! AXUIElement, kAXRoleAttribute)
+    }
+
+    private static func children(of element: AXUIElement, attribute: String) -> [AXUIElement] {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return [] }
+        return value as? [AXUIElement] ?? []
+    }
+
+    private static func string(_ element: AXUIElement, _ attribute: String) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
+        return value as? String
+    }
 }
 
 /// Reports a fresh `MeetSignal` whenever something that could change it

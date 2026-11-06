@@ -98,6 +98,8 @@ final class MeetingRecorder {
     // MARK: - Meet detection
 
     private var lastSignal: MeetSignal?
+    /// Last result of looking for a Meet tab, logged only when it changes.
+    private var lastTabCheck: Bool?? = .none
 
     private func handle(_ signal: MeetSignal) {
         if signal != lastSignal {
@@ -113,16 +115,24 @@ final class MeetingRecorder {
             suppressedUntilMicReleased = false
             // The call ended before anyone answered.
             withdrawOffer()
-            if session?.meetTitle != nil, endTimer == nil {
-                log.info("Browser let go of the mic; stopping in \(Int(self.endGrace)) s unless it comes back")
-                endTimer = Timer.scheduledTimer(withTimeInterval: endGrace, repeats: false) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.stop(reason: .leftCall) }
-                }
-            }
+            if session?.meetTitle != nil { armEndTimer("Browser let go of the mic") }
         case .browserMic(let browser, let meetTitle):
-            if session != nil {
-                if endTimer != nil { log.info("Browser has the mic again; keep recording") }
-                cancelEndTimer()
+            if let session {
+                // Chrome can keep the mic open for a minute or more after
+                // the user hangs up, so a closed Meet tab also ends the call.
+                // The visible title alone can't tell: it only shows the tab
+                // in front, and the user may just have switched tabs.
+                let tabCheck = meetTitle == nil ? MeetDetector.hasMeetTab(in: browser) : true
+                if tabCheck != lastTabCheck {
+                    lastTabCheck = tabCheck
+                    log.info("Meet tab open: \(tabCheck.map { $0 ? "yes" : "no" } ?? "can't read tabs", privacy: .public)")
+                }
+                if session.meetTitle != nil, tabCheck == false {
+                    armEndTimer("No Meet tab is open any more")
+                } else {
+                    if endTimer != nil { log.info("The call is back; keep recording") }
+                    cancelEndTimer()
+                }
             } else if let meetTitle, !suppressedUntilMicReleased, offeredMeetTitle == nil {
                 offerBrowser = browser
                 offeredMeetTitle = meetTitle
@@ -152,6 +162,14 @@ final class MeetingRecorder {
         offerAlert.close()
         offeredMeetTitle = nil
         offerBrowser = nil
+    }
+
+    private func armEndTimer(_ why: String) {
+        guard endTimer == nil else { return }
+        log.info("\(why, privacy: .public); stopping in \(Int(self.endGrace)) s unless it comes back")
+        endTimer = Timer.scheduledTimer(withTimeInterval: endGrace, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stop(reason: .leftCall) }
+        }
     }
 
     private func cancelEndTimer() {
