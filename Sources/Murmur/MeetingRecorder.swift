@@ -75,6 +75,10 @@ final class MeetingRecorder {
 
     init(transcriber: Transcriber) {
         self.transcriber = transcriber
+        // Audio is deleted once transcribed; anything still here is from a
+        // recording that never finished (a crash or force quit). Nothing is
+        // recording yet, so it is safe to clear.
+        try? FileManager.default.removeItem(at: Self.scratchFolder)
         offerAlert.onStart = { [weak self] in self?.acceptOffer() }
         offerAlert.onDecline = { [weak self] in self?.declineOffer() }
         watcher.onSignal = { [weak self] signal in self?.handle(signal) }
@@ -179,6 +183,10 @@ final class MeetingRecorder {
 
     var meetingFolder: URL { Settings.shared.meetingsFolder }
 
+    /// Where audio waits to be transcribed, one subfolder per recording.
+    private static let scratchFolder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("MurmurMeetings", isDirectory: true)
+
     /// "Start Meeting Transcript" in the menu. If a Meet call is live right
     /// now, the recording is tied to it and ends when the user leaves.
     func start() {
@@ -202,8 +210,7 @@ final class MeetingRecorder {
         cancelEndTimer()
 
         let startedAt = Date()
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MurmurMeetings/\(UUID().uuidString)", isDirectory: true)
+        let directory = Self.scratchFolder.appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         } catch {
