@@ -23,7 +23,15 @@ enum RecorderError: LocalizedError {
 /// The tap runs at whatever rate the input device uses; resampling to the
 /// 16 kHz Parakeet expects happens once at the end, in `Transcriber`.
 final class Recorder {
-    private let engine = AVAudioEngine()
+    /// Rebuilt on every `start()`. An engine caches the input device's format
+    /// when its input node is first touched; reusing one after the user
+    /// switches microphones (AirPods connecting, a USB mic, a new pick in
+    /// System Settings › Sound) makes `installTap`/`start` raise an
+    /// Objective-C exception for the format mismatch. Swift can't catch that:
+    /// AppKit swallows it, but it unwinds through the Swift concurrency
+    /// runtime and leaves its executor bookkeeping corrupt, so the next
+    /// `MainActor.assumeIsolated` (the hotkey monitor) crashes the app.
+    private var engine: AVAudioEngine?
     private let lock = NSLock()
     private var samples: [Float] = []
     private var captureRate: Double = 48_000
@@ -50,8 +58,8 @@ final class Recorder {
         guard Recorder.microphoneAuthorized else { throw RecorderError.microphoneDenied }
 
         // A fresh engine each time picks up a device the user switched to
-        // while the app was running.
-        engine.reset()
+        // while the app was running — see `engine`.
+        let engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
@@ -98,6 +106,7 @@ final class Recorder {
             input.removeTap(onBus: 0)
             throw RecorderError.engineFailed(error.localizedDescription)
         }
+        self.engine = engine
         isRecording = true
     }
 
@@ -105,8 +114,11 @@ final class Recorder {
     @discardableResult
     func stop() -> (samples: [Float], sampleRate: Double) {
         guard isRecording else { return ([], captureRate) }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        if let engine {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+        }
+        engine = nil
         isRecording = false
 
         lock.lock()

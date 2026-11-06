@@ -40,6 +40,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSUIElement</key>                   <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Murmur transcribes your speech on this Mac. Audio never leaves the device.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Murmur records meeting audio you choose to transcribe on this Mac. Audio never leaves the device.</string>
     <key>NSHumanReadableCopyright</key>      <string>Local speech to text.</string>
 </dict>
 </plist>
@@ -63,6 +65,13 @@ if [[ "${1:-}" == "--install" ]]; then
     fi
     rm -rf "/Applications/$APP_NAME.app"
     cp -R "$APP" "/Applications/$APP_NAME.app"
+    # Every build is ad-hoc signed, so macOS sees it as a new app and stale
+    # permission entries silently stop working. Start clean instead; the app
+    # asks again on launch.
+    echo "==> Resetting privacy permissions"
+    for service in Accessibility Microphone AudioCapture ScreenCapture; do
+        tccutil reset "$service" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    done
     echo "==> Installed. Launch with: open -a $APP_NAME"
 fi
 

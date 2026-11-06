@@ -10,6 +10,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     private let modelPopup = NSPopUpButton()
     private let historyPopup = NSPopUpButton()
     private let soundsCheckbox = NSButton(checkboxWithTitle: "Play a sound when recording starts", target: nil, action: nil)
+    private let meetingOffersCheckbox = NSButton(checkboxWithTitle: "Ask to transcribe when I join a Google Meet", target: nil, action: nil)
     private let loginCheckbox = NSButton(checkboxWithTitle: "Launch Murmur at login", target: nil, action: nil)
     private let micStatusLabel = NSTextField(labelWithString: "")
     private let axStatusLabel = NSTextField(labelWithString: "")
@@ -20,7 +21,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 540, height: 580),
+            contentRect: NSRect(x: 0, y: 0, width: 540, height: 610),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -150,6 +151,10 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         soundsCheckbox.action = #selector(soundsChanged)
         stack.addArrangedSubview(soundsCheckbox)
 
+        meetingOffersCheckbox.target = self
+        meetingOffersCheckbox.action = #selector(meetingOffersChanged)
+        stack.addArrangedSubview(meetingOffersCheckbox)
+
         loginCheckbox.target = self
         loginCheckbox.action = #selector(loginChanged)
         stack.addArrangedSubview(loginCheckbox)
@@ -226,6 +231,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         modelPopup.selectItem(at: ModelChoice.allCases.firstIndex(of: settings.model) ?? 0)
         historyPopup.selectItem(at: TranscriptHistory.sizes.firstIndex(of: settings.historySize) ?? 0)
         soundsCheckbox.state = settings.playSounds ? .on : .off
+        meetingOffersCheckbox.state = settings.meetingOffers ? .on : .off
         loginCheckbox.state = LoginItem.isEnabled ? .on : .off
         refreshPermissions()
     }
@@ -287,6 +293,11 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func soundsChanged() {
         Settings.shared.playSounds = soundsCheckbox.state == .on
+    }
+
+    @objc private func meetingOffersChanged() {
+        Settings.shared.meetingOffers = meetingOffersCheckbox.state == .on
+        NotificationCenter.default.post(name: AppDelegate.meetingOffersChanged, object: nil)
     }
 
     @objc private func loginChanged() {

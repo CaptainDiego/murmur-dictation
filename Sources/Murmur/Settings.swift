@@ -138,6 +138,7 @@ final class Settings {
         static let trimTrailingNewline = "trimTrailingNewline"
         static let didFirstRun = "didFirstRun"
         static let historySize = "historySize"
+        static let meetingOffers = "meetingOffers"
     }
 
     private init() {
@@ -154,6 +155,7 @@ final class Settings {
             Key.playSounds: true,
             Key.trimTrailingNewline: true,
             Key.historySize: 5,
+            Key.meetingOffers: true,
         ])
     }
 
@@ -215,6 +217,19 @@ final class Settings {
             return TranscriptHistory.sizes.contains(value) ? value : TranscriptHistory.sizes[0]
         }
         set { defaults.set(newValue, forKey: Key.historySize) }
+    }
+
+    /// Whether joining a Google Meet brings up the "Transcribe this call?"
+    /// alert. Murmur never records a call without a yes.
+    var meetingOffers: Bool {
+        get { defaults.bool(forKey: Key.meetingOffers) }
+        set { defaults.set(newValue, forKey: Key.meetingOffers) }
+    }
+
+    /// Where meeting transcripts are saved as Markdown.
+    var meetingsFolder: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Murmur Meetings", isDirectory: true)
     }
 
     /// False until the app has finished its one-time setup.

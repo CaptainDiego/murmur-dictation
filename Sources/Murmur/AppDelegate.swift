@@ -15,12 +15,14 @@ enum AppState: Equatable {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static let triggerChanged = Notification.Name("MurmurTriggerChanged")
     static let modelChanged = Notification.Name("MurmurModelChanged")
+    static let meetingOffersChanged = Notification.Name("MurmurMeetingOffersChanged")
 
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
     private let hotkey = HotkeyListener()
     private let recorder = Recorder()
     private let transcriber = Transcriber()
+    private lazy var meetings = MeetingRecorder(transcriber: transcriber)
     private var preferences: PreferencesWindowController?
 
     private var state: AppState = .preparing("Starting…") { didSet { refreshStatusIcon() } }
@@ -55,6 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         runFirstLaunchSetupIfNeeded()
         applyTrigger()
         warmUpModel()
+        meetings.onChange = { [weak self] in self?.refreshStatusIcon() }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(applyMeetingOffers), name: AppDelegate.meetingOffersChanged, object: nil)
+        applyMeetingOffers()
 
         // Ask for the microphone up front so the first dictation is instant.
         Task { _ = await Recorder.requestMicrophoneAccess() }
@@ -75,6 +81,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !Permissions.hasAccessibility {
             Permissions.requestAccessibility()
         }
+    }
+
+    @objc private func applyMeetingOffers() {
+        meetings.setOffersEnabled(Settings.shared.meetingOffers)
+    }
+
+    /// Quitting mid-meeting stops the recording and waits for its
+    /// transcript to be written (tens of seconds for a long call), rather
+    /// than throwing the meeting away.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard meetings.recordingSince != nil || meetings.pendingTranscripts > 0 else { return .terminateNow }
+        meetings.stop(reason: .quit)
+        meetings.onChange = { [weak self] in
+            guard let self, self.meetings.pendingTranscripts == 0 else { return }
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -237,6 +260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func discardCapture() {
         recorder.cancel()
+        meetings.dictationEnded()
         isCapturing = false
         recordingStartedAt = nil
         state = .ready
@@ -245,6 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func stopAndTranscribe() {
         guard isCapturing else { return }
         let captured = recorder.stop()
+        meetings.dictationEnded()
         isCapturing = false
         recordingStartedAt = nil
         state = .transcribing
@@ -326,7 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var tint: NSColor? = nil
         switch state {
         case .ready:
-            button.image = Self.lipsImage(recording: false, description: description)
+            button.image = Self.lipsImage(recording: meetingIsRecording, description: description)
             button.contentTintColor = nil
             return
         case .listening:
@@ -382,14 +407,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusLine: String {
         switch state {
         case .preparing(let message): return message
-        case .ready: return "Ready · \(Settings.shared.trigger.display)"
+        case .ready:
+            if meetingIsRecording { return "Recording meeting…" }
+            return "Ready · \(Settings.shared.trigger.display)"
         case .listening: return "Listening…"
         case .transcribing: return "Transcribing…"
         case .problem(let message): return message
         }
     }
 
+    private var meetingIsRecording: Bool {
+        meetings.recordingSince != nil
+    }
+
     // MARK: - Menu
+
+    private func addMeetingItems(to menu: NSMenu) {
+        menu.addItem(.separator())
+
+        if let since = meetings.recordingSince {
+            let minutes = Int(Date().timeIntervalSince(since) / 60)
+            let stop = NSMenuItem(
+                title: "Stop Meeting Transcript (\(minutes) min)", action: #selector(stopMeeting),
+                keyEquivalent: "")
+            stop.target = self
+            menu.addItem(stop)
+        } else {
+            let start = NSMenuItem(
+                title: "Start Meeting Transcript", action: #selector(startMeeting), keyEquivalent: "")
+            start.target = self
+            start.toolTip = "Records your mic and this Mac's audio, then saves a timestamped Markdown transcript."
+            menu.addItem(start)
+        }
+
+        if meetings.pendingTranscripts > 0 {
+            let busy = NSMenuItem(title: "Writing meeting transcript…", action: nil, keyEquivalent: "")
+            busy.isEnabled = false
+            menu.addItem(busy)
+        }
+        if let error = meetings.lastError {
+            let problem = NSMenuItem(title: error, action: nil, keyEquivalent: "")
+            problem.isEnabled = false
+            menu.addItem(problem)
+        }
+        if meetings.lastTranscript != nil {
+            let last = NSMenuItem(
+                title: "Open Last Meeting Transcript", action: #selector(openLastTranscript), keyEquivalent: "")
+            last.target = self
+            menu.addItem(last)
+        }
+        let open = NSMenuItem(
+            title: "Open Meetings Folder", action: #selector(openMeetingsFolder), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+    }
+
+    @objc private func startMeeting() {
+        meetings.start()
+    }
+
+    @objc private func stopMeeting() {
+        meetings.stop()
+    }
+
+    @objc private func openLastTranscript() {
+        if let url = meetings.lastTranscript { NSWorkspace.shared.open(url) }
+    }
+
+    @objc private func openMeetingsFolder() {
+        let folder = meetings.meetingFolder
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(folder)
+    }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
@@ -425,6 +514,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             action: nil, keyEquivalent: "")
         mode.isEnabled = false
         menu.addItem(mode)
+
+        addMeetingItems(to: menu)
 
         history.capacity = Settings.shared.historySize
         if !history.isEmpty {

@@ -136,6 +136,22 @@ actor Transcriber {
         return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Transcribes a recording on disk and returns every token with its time
+    /// in the file. Long files (a whole meeting) are chunked by FluidAudio,
+    /// which also resamples to 16 kHz mono.
+    func transcribeTimed(fileAt url: URL) async throws -> [TimedToken] {
+        guard let manager else { throw TranscriberError.notReady }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        // A CAF header alone is a few KB; anything this small holds no speech.
+        guard (attributes?[.size] as? Int ?? 0) > 16_384 else { throw TranscriberError.tooShort }
+
+        var state = try TdtDecoderState(decoderLayers: decoderLayers)
+        let result = try await manager.transcribe(url, decoderState: &state)
+        return (result.tokenTimings ?? []).map {
+            TimedToken(text: $0.token, start: $0.startTime, end: $0.endTime)
+        }
+    }
+
     /// Frees the CoreML models, e.g. when switching variants.
     func unload() async {
         if let manager { await manager.cleanup() }
