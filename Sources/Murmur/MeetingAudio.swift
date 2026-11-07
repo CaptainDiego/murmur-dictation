@@ -180,6 +180,9 @@ final class SystemAudioCapture {
     private var procID: AudioDeviceIOProcID?
     private var outputListener: AudioObjectPropertyListenerBlock?
     private var processListener: AudioObjectPropertyListenerBlock?
+    private var permissionRetry: Timer?
+    /// Whether the last entry in `segments` is still being recorded.
+    private var segmentOpen = false
     /// When set, only this browser's processes are recorded.
     private let browser: Browser?
     /// The browser processes the current tap covers.
@@ -189,6 +192,11 @@ final class SystemAudioCapture {
     /// Loudest sample seen, touched only on `queue`. Stays at zero when the
     /// permission was refused, since the tap then delivers pure silence.
     nonisolated(unsafe) private var peak: Float = 0
+    /// Loudest sample in the segment being recorded now, also on `queue`.
+    /// A segment that stays silent is thrown away when it closes, so the
+    /// pieces left by `retryUntilHeard` never reach Parakeet, which tends
+    /// to invent words ("thank you", "um") when fed silence.
+    nonisolated(unsafe) private var segmentPeak: Float = 0
 
     init(directory: URL, startedAt: Date, onlyFrom browser: Browser? = nil) {
         self.directory = directory
@@ -200,9 +208,36 @@ final class SystemAudioCapture {
         try openSegment()
         watchOutputDevice()
         if browser != nil { watchProcesses() }
+        retryUntilHeard()
+    }
+
+    /// A tap created while macOS is still asking for the "System Audio
+    /// Recording" permission (the first meeting after installing) delivers
+    /// silence for its whole life, even once the user clicks Allow. So while
+    /// nothing has been heard yet, rebuild it every few seconds; the first
+    /// rebuild after the grant gets real audio. The silent pieces this
+    /// leaves behind hold no speech and are skipped when transcribing.
+    private func retryUntilHeard() {
+        let started = Date()
+        permissionRetry = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self, !self.heardAnything, Date().timeIntervalSince(started) < 60 else {
+                    timer.invalidate()
+                    return
+                }
+                self.closeSegment()
+                do {
+                    try self.openSegment()
+                } catch {
+                    NSLog("Murmur: system audio capture could not restart — \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     func stop() {
+        permissionRetry?.invalidate()
+        permissionRetry = nil
         if let outputListener {
             var addr = CoreAudioSupport.address(kAudioHardwarePropertyDefaultOutputDevice)
             AudioObjectRemovePropertyListenerBlock(
@@ -286,6 +321,7 @@ final class SystemAudioCapture {
 
             let url = directory.appendingPathComponent("system-\(segments.count).caf")
             let writer = try DownsamplingWriter(url: url, inputFormat: format)
+            queue.sync { segmentPeak = 0 }
 
             // With a dispatch queue the block runs there, not on the real-time
             // I/O thread, so writing the file directly is safe.
@@ -303,6 +339,7 @@ final class SystemAudioCapture {
             try CoreAudioSupport.check(AudioDeviceStart(device, proc), "Starting system audio capture")
 
             segments.append(AudioSegment(url: url, offset: Date().timeIntervalSince(startedAt)))
+            segmentOpen = true
         } catch {
             closeSegment()
             throw error
@@ -310,11 +347,12 @@ final class SystemAudioCapture {
     }
 
     nonisolated private func trackPeak(_ buffer: AVAudioPCMBuffer) {
-        guard peak <= 0.0001, let data = buffer.floatChannelData else { return }
+        guard segmentPeak <= 0.0001, let data = buffer.floatChannelData else { return }
         let count = Int(buffer.frameLength) * (buffer.format.isInterleaved ? Int(buffer.format.channelCount) : 1)
-        for index in 0..<count where abs(data[0][index]) > peak {
-            peak = abs(data[0][index])
+        for index in 0..<count where abs(data[0][index]) > segmentPeak {
+            segmentPeak = abs(data[0][index])
         }
+        peak = max(peak, segmentPeak)
     }
 
     private func closeSegment() {
@@ -332,7 +370,11 @@ final class SystemAudioCapture {
         aggregateID = AudioObjectID(kAudioObjectUnknown)
         tapID = AudioObjectID(kAudioObjectUnknown)
         // Let any write still queued finish before the file is let go.
-        queue.sync {}
+        let silent = queue.sync { segmentPeak <= 0.0001 }
+        if segmentOpen, silent, let last = segments.popLast() {
+            try? FileManager.default.removeItem(at: last.url)
+        }
+        segmentOpen = false
     }
 
     /// The browser can start a new audio process mid-call (Chromium restarts

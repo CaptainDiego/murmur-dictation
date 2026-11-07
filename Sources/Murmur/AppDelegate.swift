@@ -63,7 +63,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         applyMeetingOffers()
 
         // Ask for the microphone up front so the first dictation is instant.
-        Task { _ = await Recorder.requestMicrophoneAccess() }
+        // Then the call-audio permission, so the first Google Meet isn't
+        // interrupted by the prompt (or recorded one-sided while it is up).
+        Task {
+            _ = await Recorder.requestMicrophoneAccess()
+            if Settings.shared.meetingOffers { SystemAudioPermission.requestIfNeeded() }
+        }
     }
 
     /// One-time setup: start at login, and ask for the Accessibility right

@@ -14,6 +14,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     private let loginCheckbox = NSButton(checkboxWithTitle: "Launch Murmur at login", target: nil, action: nil)
     private let micStatusLabel = NSTextField(labelWithString: "")
     private let axStatusLabel = NSTextField(labelWithString: "")
+    private let audioStatusLabel = NSTextField(labelWithString: "")
 
     /// Remembers the combo so toggling the modifier popup back to "None"
     /// restores what the user had rather than a default.
@@ -21,7 +22,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 540, height: 610),
+            contentRect: NSRect(x: 0, y: 0, width: 540, height: 640),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -144,6 +145,8 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
             permissionRow(micStatusLabel, button: "Open Microphone Settings", action: #selector(openMic)))
         stack.addArrangedSubview(
             permissionRow(axStatusLabel, button: "Open Accessibility Settings", action: #selector(openAccessibility)))
+        stack.addArrangedSubview(
+            permissionRow(audioStatusLabel, button: "Open System Audio Settings", action: #selector(openSystemAudio)))
 
         stack.addArrangedSubview(separator())
 
@@ -244,6 +247,15 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         let axOK = Permissions.hasAccessibility
         axStatusLabel.stringValue = axOK ? "Accessibility: granted" : "Accessibility: not granted"
         axStatusLabel.textColor = axOK ? .secondaryLabelColor : .systemOrange
+
+        switch SystemAudioPermission.status {
+        case .granted:
+            audioStatusLabel.stringValue = "System audio (meetings): granted"
+            audioStatusLabel.textColor = .secondaryLabelColor
+        case .denied, .unknown:
+            audioStatusLabel.stringValue = "System audio (meetings): not granted"
+            audioStatusLabel.textColor = .systemOrange
+        }
     }
 
     private func commit(_ trigger: Trigger) {
@@ -297,6 +309,9 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func meetingOffersChanged() {
         Settings.shared.meetingOffers = meetingOffersCheckbox.state == .on
+        if Settings.shared.meetingOffers {
+            SystemAudioPermission.requestIfNeeded { [weak self] _ in self?.refreshPermissions() }
+        }
         NotificationCenter.default.post(name: AppDelegate.meetingOffersChanged, object: nil)
     }
 
@@ -319,6 +334,11 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func openMic() {
         Permissions.openMicrophoneSettings()
+    }
+
+    @objc private func openSystemAudio() {
+        SystemAudioPermission.requestIfNeeded { [weak self] _ in self?.refreshPermissions() }
+        SystemAudioPermission.openSettings()
     }
 
     @objc private func openAccessibility() {
