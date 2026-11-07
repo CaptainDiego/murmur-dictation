@@ -15,7 +15,7 @@ enum SystemAudioPermission {
     private static let service = "kTCCServiceAudioCapture" as CFString
 
     private typealias PreflightFunc = @convention(c) (CFString, CFDictionary?) -> Int
-    private typealias RequestFunc = @convention(c) (CFString, CFDictionary?, @escaping (Bool) -> Void) -> Void
+    private typealias RequestFunc = @convention(c) (CFString, CFDictionary?, @escaping @convention(block) (Bool) -> Void) -> Void
 
     private static let tcc = dlopen("/System/Library/PrivateFrameworks/TCC.framework/Versions/A/TCC", RTLD_NOW)
 

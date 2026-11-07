@@ -103,7 +103,7 @@ final class MeetingRecorder {
 
     private var lastSignal: MeetSignal?
     /// Last result of looking for a Meet tab, logged only when it changes.
-    private var lastTabCheck: Bool?? = .none
+    private var lastTabCheck = ""
 
     private func handle(_ signal: MeetSignal) {
         if signal != lastSignal {
@@ -127,9 +127,10 @@ final class MeetingRecorder {
                 // The visible title alone can't tell: it only shows the tab
                 // in front, and the user may just have switched tabs.
                 let tabCheck = meetTitle == nil ? MeetDetector.hasMeetTab(in: browser) : true
-                if tabCheck != lastTabCheck {
-                    lastTabCheck = tabCheck
-                    log.info("Meet tab open: \(tabCheck.map { $0 ? "yes" : "no" } ?? "can't read tabs", privacy: .public)")
+                let described = tabCheck.map { $0 ? "yes" : "no" } ?? "can't read tabs"
+                if described != lastTabCheck {
+                    lastTabCheck = described
+                    log.info("Meet tab open: \(described, privacy: .public)")
                 }
                 if session.meetTitle != nil, tabCheck == false {
                     armEndTimer("No Meet tab is open any more")

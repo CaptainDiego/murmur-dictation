@@ -197,6 +197,8 @@ final class SystemAudioCapture {
     /// pieces left by `retryUntilHeard` never reach Parakeet, which tends
     /// to invent words ("thank you", "um") when fed silence.
     nonisolated(unsafe) private var segmentPeak: Float = 0
+    /// Below this, a sample counts as silence (about -80 dBFS).
+    nonisolated private static let silence: Float = 0.0001
 
     init(directory: URL, startedAt: Date, onlyFrom browser: Browser? = nil) {
         self.directory = directory
@@ -225,12 +227,7 @@ final class SystemAudioCapture {
                     timer.invalidate()
                     return
                 }
-                self.closeSegment()
-                do {
-                    try self.openSegment()
-                } catch {
-                    NSLog("Murmur: system audio capture could not restart — \(error.localizedDescription)")
-                }
+                self.restartSegment(because: nil)
             }
         }
     }
@@ -238,19 +235,29 @@ final class SystemAudioCapture {
     func stop() {
         permissionRetry?.invalidate()
         permissionRetry = nil
-        if let outputListener {
-            var addr = CoreAudioSupport.address(kAudioHardwarePropertyDefaultOutputDevice)
-            AudioObjectRemovePropertyListenerBlock(
-                AudioObjectID(kAudioObjectSystemObject), &addr, .main, outputListener)
-        }
-        outputListener = nil
-        if let processListener {
-            var addr = CoreAudioSupport.address(kAudioHardwarePropertyProcessObjectList)
-            AudioObjectRemovePropertyListenerBlock(
-                AudioObjectID(kAudioObjectSystemObject), &addr, .main, processListener)
-        }
-        processListener = nil
+        removeListener(&outputListener, kAudioHardwarePropertyDefaultOutputDevice)
+        removeListener(&processListener, kAudioHardwarePropertyProcessObjectList)
         closeSegment()
+    }
+
+    private func removeListener(
+        _ listener: inout AudioObjectPropertyListenerBlock?, _ selector: AudioObjectPropertySelector
+    ) {
+        guard let block = listener else { return }
+        var addr = CoreAudioSupport.address(selector)
+        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, .main, block)
+        listener = nil
+    }
+
+    /// Swaps in a fresh tap and capture device; logged unless routine.
+    private func restartSegment(because reason: String?) {
+        if let reason { NSLog("Murmur: \(reason); restarting system audio capture") }
+        closeSegment()
+        do {
+            try openSegment()
+        } catch {
+            NSLog("Murmur: system audio capture could not restart — \(error.localizedDescription)")
+        }
     }
 
     /// The browser's processes that Core Audio knows about right now.
@@ -264,7 +271,7 @@ final class SystemAudioCapture {
 
     /// True once any non-silent audio came through the tap.
     var heardAnything: Bool {
-        queue.sync { peak > 0.0001 }
+        queue.sync { peak > Self.silence }
     }
 
     private func openSegment() throws {
@@ -347,7 +354,7 @@ final class SystemAudioCapture {
     }
 
     nonisolated private func trackPeak(_ buffer: AVAudioPCMBuffer) {
-        guard segmentPeak <= 0.0001, let data = buffer.floatChannelData else { return }
+        guard segmentPeak <= Self.silence, let data = buffer.floatChannelData else { return }
         let count = Int(buffer.frameLength) * (buffer.format.isInterleaved ? Int(buffer.format.channelCount) : 1)
         for index in 0..<count where abs(data[0][index]) > segmentPeak {
             segmentPeak = abs(data[0][index])
@@ -370,7 +377,7 @@ final class SystemAudioCapture {
         aggregateID = AudioObjectID(kAudioObjectUnknown)
         tapID = AudioObjectID(kAudioObjectUnknown)
         // Let any write still queued finish before the file is let go.
-        let silent = queue.sync { segmentPeak <= 0.0001 }
+        let silent = queue.sync { segmentPeak <= Self.silence }
         if segmentOpen, silent, let last = segments.popLast() {
             try? FileManager.default.removeItem(at: last.url)
         }
@@ -384,13 +391,7 @@ final class SystemAudioCapture {
         let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             MainActor.assumeIsolated {
                 guard let self, self.browserProcesses() != self.tappedProcesses else { return }
-                NSLog("Murmur: browser audio processes changed; restarting system audio capture")
-                self.closeSegment()
-                do {
-                    try self.openSegment()
-                } catch {
-                    NSLog("Murmur: system audio capture could not restart — \(error.localizedDescription)")
-                }
+                self.restartSegment(because: "browser audio processes changed")
             }
         }
         AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, .main, listener)
@@ -404,13 +405,7 @@ final class SystemAudioCapture {
         let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                NSLog("Murmur: output device changed; restarting system audio capture")
-                self.closeSegment()
-                do {
-                    try self.openSegment()
-                } catch {
-                    NSLog("Murmur: system audio capture could not restart — \(error.localizedDescription)")
-                }
+                self.restartSegment(because: "output device changed")
             }
         }
         AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, .main, listener)
