@@ -86,6 +86,50 @@ enum CoreAudioSupport {
         return uid
     }
 
+    /// The rate the default output device is actually running at.
+    static func defaultOutputSampleRate() -> Double? {
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var addr = address(kAudioHardwarePropertyDefaultOutputDevice)
+        var device = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &device) == noErr else { return nil }
+        var rateAddr = address(kAudioDevicePropertyNominalSampleRate)
+        var rate: Float64 = 0
+        size = UInt32(MemoryLayout<Float64>.size)
+        guard AudioObjectGetPropertyData(device, &rateAddr, 0, nil, &size, &rate) == noErr else { return nil }
+        return rate
+    }
+
+    /// "Shure MV7 (USB)" style names for the diagnostics log.
+    static func defaultInputDescription() -> String {
+        describeDefault(kAudioHardwarePropertyDefaultInputDevice)
+    }
+
+    static func defaultOutputDescription() -> String {
+        describeDefault(kAudioHardwarePropertyDefaultOutputDevice)
+    }
+
+    private static func describeDefault(_ selector: AudioObjectPropertySelector) -> String {
+        let system = AudioObjectID(kAudioObjectSystemObject)
+        var addr = address(selector)
+        var device = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(system, &addr, 0, nil, &size, &device) == noErr,
+            device != kAudioObjectUnknown
+        else { return "unknown device" }
+        let name = string(device, kAudioObjectPropertyName) ?? "unnamed device"
+        let transport: String
+        switch uint32(device, kAudioDevicePropertyTransportType) {
+        case kAudioDeviceTransportTypeBuiltIn: transport = "built-in"
+        case kAudioDeviceTransportTypeUSB: transport = "USB"
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE: transport = "Bluetooth"
+        case kAudioDeviceTransportTypeVirtual: transport = "virtual"
+        case kAudioDeviceTransportTypeAggregate: transport = "aggregate"
+        default: transport = "other"
+        }
+        return "\(name) (\(transport))"
+    }
+
     static func uint32(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> UInt32 {
         var addr = address(selector)
         var value: UInt32 = 0

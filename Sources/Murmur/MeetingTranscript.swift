@@ -157,6 +157,76 @@ enum MeetingTranscript {
         return out
     }
 
+    // MARK: - Filler words
+
+    /// Hesitations that carry no meaning anywhere ("uh", "um", French
+    /// "euh"). Words like "like" or "you know" often do, so they stay.
+    static let fillers: Set<String> = [
+        "uh", "uhh", "uhm", "um", "umm", "erm", "er", "ah", "ahh", "hmm", "hm", "mm", "mmm", "euh", "heu",
+    ]
+    /// Agreement noises: dropped only when they are the whole utterance,
+    /// since inside a sentence "mm-hmm" can mean "yes".
+    static let backchannels: Set<String> = ["mm-hmm", "mhm", "uh-huh", "mm-mm", "uh-uh"]
+
+    /// Removes filler words, then drops utterances left with nothing to say.
+    static func removingFillers(from utterances: [Utterance]) -> [Utterance] {
+        utterances.compactMap { utterance in
+            let text = removeFillers(utterance.text)
+            return text.isEmpty
+                ? nil : Utterance(speaker: utterance.speaker, start: utterance.start, end: utterance.end, text: text)
+        }
+    }
+
+    /// "So, uh, we shipped it. Um, next week." → "So, we shipped it. Next week."
+    /// Returns "" when only fillers (or a lone "Mm-hmm.") were said.
+    static func removeFillers(_ text: String) -> String {
+        let words = text.split(separator: " ").map(String.init)
+        func core(_ word: String) -> String {
+            word.lowercased().trimmingCharacters(in: CharacterSet.punctuationCharacters.subtracting(["-"]))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        }
+        if words.allSatisfy({ fillers.contains(core($0)) || backchannels.contains(core($0)) }) { return "" }
+
+        // "ERM" or "AH" in capitals is an acronym, not a hesitation.
+        func isFiller(_ word: String) -> Bool {
+            let letters = word.filter(\.isLetter)
+            return fillers.contains(core(word)) && !(letters.count > 1 && letters.allSatisfy(\.isUppercase))
+        }
+
+        var kept: [String] = []
+        var capitalizeNext = false
+        for word in words {
+            if isFiller(word) {
+                // "So, uh, we" → "So we": the commas only framed the filler.
+                if word.hasSuffix(","), let last = kept.last, last.hasSuffix(",") {
+                    kept[kept.count - 1] = String(last.dropLast())
+                }
+                // "it, um." → "it." : the filler's sentence end moves back.
+                if let end = word.last, ".?!".contains(end), let last = kept.popLast() {
+                    let trimmed = last.hasSuffix(",") ? String(last.dropLast()) : last
+                    kept.append(endsSentence(trimmed) ? trimmed : trimmed + String(end))
+                }
+                // A sentence that began with "Uh, so…" should still start
+                // with a capital once the "Uh" is gone.
+                if kept.isEmpty || kept.last.map(endsSentence) == true || word.first?.isUppercase == true {
+                    capitalizeNext = true
+                }
+                continue
+            }
+            var word = word
+            if capitalizeNext, kept.isEmpty || kept.last.map(endsSentence) == true {
+                word = word.prefix(1).uppercased() + word.dropFirst()
+            }
+            capitalizeNext = false
+            kept.append(word)
+        }
+        // A filler at the very end can leave a dangling comma.
+        if let last = kept.last, last.hasSuffix(",") {
+            kept[kept.count - 1] = String(last.dropLast()) + "."
+        }
+        return kept.joined(separator: " ")
+    }
+
     // MARK: - Helpers
 
     private static func overlaps(_ a: Utterance, _ b: Utterance, window: TimeInterval) -> Bool {

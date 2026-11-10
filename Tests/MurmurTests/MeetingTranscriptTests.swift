@@ -91,4 +91,23 @@ struct MeetWindowTests {
         #expect(MeetWindow.meetingName("Meet - abc-defg-hij - Google Chrome") == nil)
         #expect(MeetWindow.code(in: "Meet - abc-defg-hij") == "abc-defg-hij")
     }
+
+    @Test("Filler words are removed; meaning and acronyms are kept")
+    func removesFillers() {
+        let cases: [(String, String)] = [
+            ("So, uh, we shipped it.", "So we shipped it."),
+            ("Uh, I think so.", "I think so."),
+            ("It works, um.", "It works."),
+            ("That's done. Uh, so next week we start.", "That's done. So next week we start."),
+            ("Mm-hmm.", ""),
+            ("Uh, um.", ""),
+            ("Mm-hmm, that makes sense.", "Mm-hmm, that makes sense."),
+            ("Je pense que, euh, c'est bien.", "Je pense que c'est bien."),
+            ("We were, uh", "We were."),
+            ("The ERM team and the hum of the fan.", "The ERM team and the hum of the fan."),
+        ]
+        for (input, expected) in cases {
+            #expect(MeetingTranscript.removeFillers(input) == expected)
+        }
+    }
 }

@@ -139,6 +139,7 @@ final class Settings {
         static let didFirstRun = "didFirstRun"
         static let historySize = "historySize"
         static let meetingOffers = "meetingOffers"
+        static let removeFillers = "removeFillers"
     }
 
     private init() {
@@ -156,6 +157,7 @@ final class Settings {
             Key.trimTrailingNewline: true,
             Key.historySize: 5,
             Key.meetingOffers: true,
+            Key.removeFillers: true,
         ])
     }
 
@@ -224,6 +226,13 @@ final class Settings {
     var meetingOffers: Bool {
         get { defaults.bool(forKey: Key.meetingOffers) }
         set { defaults.set(newValue, forKey: Key.meetingOffers) }
+    }
+
+    /// Whether meeting transcripts leave out "uh", "um" and the like. The
+    /// raw files kept in Recordings/ always have every word.
+    var removeFillers: Bool {
+        get { defaults.bool(forKey: Key.removeFillers) }
+        set { defaults.set(newValue, forKey: Key.removeFillers) }
     }
 
     /// Where meeting transcripts are saved as Markdown.

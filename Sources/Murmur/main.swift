@@ -5,6 +5,9 @@ let arguments = CommandLine.arguments
 if arguments.count > 2, arguments[1] == "--transcribe" {
     SelfTest.run(path: arguments[2])
 }
+if arguments.count > 2, arguments[1] == "--retranscribe" {
+    Retranscribe.run(folder: arguments[2])
+}
 if arguments.count > 1, arguments[1] == "--status" {
     MainActor.assumeIsolated { SelfTest.printStatus() }
 }

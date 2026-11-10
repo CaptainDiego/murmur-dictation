@@ -24,6 +24,9 @@ final class DownsamplingWriter {
 
     private let converter: AVAudioConverter
     private let file: AVAudioFile
+    /// Conversion or disk-write failures, reported in the segment summary.
+    private(set) var failures = 0
+    private(set) var lastFailure: String?
 
     init(url: URL, inputFormat: AVAudioFormat) throws {
         guard let converter = AVAudioConverter(from: inputFormat, to: Self.format) else {
@@ -64,8 +67,17 @@ final class DownsamplingWriter {
             status.pointee = .haveData
             return buffer
         }
-        if error == nil, output.frameLength > 0 {
-            try? file.write(from: output)
+        if let error {
+            failures += 1
+            lastFailure = "convert: \(error.localizedDescription)"
+            return
+        }
+        guard output.frameLength > 0 else { return }
+        do {
+            try file.write(from: output)
+        } catch {
+            failures += 1
+            lastFailure = "write: \(error.localizedDescription)"
         }
     }
 }
@@ -80,12 +92,17 @@ final class MicCapture {
     private let directory: URL
     private let startedAt: Date
     private var engine: AVAudioEngine?
+    private var writer: DownsamplingWriter?
     private var configObserver: NSObjectProtocol?
     private(set) var segments: [AudioSegment] = []
+    private let diagnostics: MeetingDiagnostics
+    let meter: LevelMeter
 
-    init(directory: URL, startedAt: Date) {
+    init(directory: URL, startedAt: Date, diagnostics: MeetingDiagnostics) {
         self.directory = directory
         self.startedAt = startedAt
+        self.diagnostics = diagnostics
+        meter = LevelMeter(side: "me", diagnostics: diagnostics)
     }
 
     func start() throws {
@@ -104,10 +121,13 @@ final class MicCapture {
 
         let url = directory.appendingPathComponent("mic-\(segments.count).caf")
         let writer = try DownsamplingWriter(url: url, inputFormat: format)
+        let meter = self.meter
+        meter.sampleRate = format.sampleRate
 
         // The tap runs on an AVAudioEngine thread (not the real-time one),
         // where converting and writing are fine.
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
+            meter.record(buffer)
             writer.write(buffer)
         }
         engine.prepare()
@@ -119,7 +139,10 @@ final class MicCapture {
         }
 
         self.engine = engine
+        self.writer = writer
         segments.append(AudioSegment(url: url, offset: Date().timeIntervalSince(startedAt)))
+        diagnostics.note(
+            "[me] segment \(segments.count - 1) opened: \(CoreAudioSupport.defaultInputDescription()), \(Int(format.sampleRate)) Hz × \(format.channelCount) ch → \(url.lastPathComponent)")
 
         // The engine stops itself when the input device changes underneath it.
         configObserver = NotificationCenter.default.addObserver(
@@ -137,10 +160,20 @@ final class MicCapture {
             engine.stop()
         }
         // Dropping the engine releases the tap closure, which closes the file.
+        if engine != nil {
+            let stats = meter.takeSegment()
+            var line = "[me] segment \(segments.count - 1) closed: \(LevelMeter.describe(stats, sampleRate: meter.sampleRate))"
+            if let writer, writer.failures > 0 {
+                line += " — WARNING \(writer.failures) write failures, last: \(writer.lastFailure ?? "?")"
+            }
+            diagnostics.note(line)
+        }
         engine = nil
+        writer = nil
     }
 
     private func deviceChanged() {
+        diagnostics.note("[me] input device changed; restarting mic capture")
         closeSegment()
         reopen(attempt: 0)
     }
@@ -151,9 +184,10 @@ final class MicCapture {
             try openSegment()
         } catch {
             guard attempt < 10 else {
-                NSLog("Murmur: meeting mic could not restart — \(error.localizedDescription)")
+                diagnostics.note("[me] ERROR mic could not restart, YOUR SIDE IS NO LONGER RECORDED — \(error.localizedDescription)")
                 return
             }
+            diagnostics.note("[me] reopen attempt \(attempt + 1) failed — \(error.localizedDescription)")
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(500))
                 self?.reopen(attempt: attempt + 1)
@@ -188,6 +222,12 @@ final class SystemAudioCapture {
     /// The browser processes the current tap covers.
     private var tappedProcesses: Set<AudioObjectID> = []
     private(set) var segments: [AudioSegment] = []
+    /// Segments that never got above silence, not transcribed.
+    private(set) var silentSegments: [AudioSegment] = []
+    private var fileCounter = 0
+    private var writer: DownsamplingWriter?
+    private let diagnostics: MeetingDiagnostics
+    let meter: LevelMeter
 
     /// Loudest sample seen, touched only on `queue`. Stays at zero when the
     /// permission was refused, since the tap then delivers pure silence.
@@ -200,10 +240,12 @@ final class SystemAudioCapture {
     /// Below this, a sample counts as silence (about -80 dBFS).
     nonisolated private static let silence: Float = 0.0001
 
-    init(directory: URL, startedAt: Date, onlyFrom browser: Browser? = nil) {
+    init(directory: URL, startedAt: Date, diagnostics: MeetingDiagnostics, onlyFrom browser: Browser? = nil) {
         self.directory = directory
         self.startedAt = startedAt
         self.browser = browser
+        self.diagnostics = diagnostics
+        meter = LevelMeter(side: "others", diagnostics: diagnostics)
     }
 
     func start() throws {
@@ -224,10 +266,13 @@ final class SystemAudioCapture {
         permissionRetry = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] timer in
             MainActor.assumeIsolated {
                 guard let self, !self.heardAnything, Date().timeIntervalSince(started) < 60 else {
+                    if let self, !self.heardAnything {
+                        self.diagnostics.note("[others] WARNING still silent after 60 s of retries — permission missing, or nobody has spoken yet")
+                    }
                     timer.invalidate()
                     return
                 }
-                self.restartSegment(because: nil)
+                self.restartSegment(because: "nothing heard yet (permission retry)")
             }
         }
     }
@@ -250,13 +295,13 @@ final class SystemAudioCapture {
     }
 
     /// Swaps in a fresh tap and capture device; logged unless routine.
-    private func restartSegment(because reason: String?) {
-        if let reason { NSLog("Murmur: \(reason); restarting system audio capture") }
+    private func restartSegment(because reason: String) {
+        diagnostics.note("[others] restarting capture: \(reason)")
         closeSegment()
         do {
             try openSegment()
         } catch {
-            NSLog("Murmur: system audio capture could not restart — \(error.localizedDescription)")
+            diagnostics.note("[others] ERROR capture could not restart, THE OTHER SIDE IS NO LONGER RECORDED — \(error.localizedDescription)")
         }
     }
 
@@ -298,13 +343,26 @@ final class SystemAudioCapture {
             var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
             try CoreAudioSupport.check(
                 AudioObjectGetPropertyData(tap, &addr, 0, nil, &size, &asbd), "Reading the tap format")
-            guard let format = AVAudioFormat(streamDescription: &asbd) else {
-                throw CoreAudioSupport.Failure(what: "Reading the tap format", status: -1)
-            }
-
             // A tap is read through a private aggregate device that wraps the
             // current output device.
             let outputUID = try CoreAudioSupport.defaultOutputDeviceUID()
+
+            // The tap reports 48 kHz even when the output device runs at
+            // something else (EarPods and many USB headsets: 44.1 kHz). The
+            // samples arrive at the device's rate, so trusting the tap's
+            // number made the other side play ~9% fast and its timestamps
+            // drift earlier through the call.
+            let tapRate = asbd.mSampleRate
+            if let deviceRate = CoreAudioSupport.defaultOutputSampleRate(), deviceRate > 0,
+                abs(deviceRate - tapRate) > 1
+            {
+                diagnostics.note(
+                    "[others] tap says \(Int(tapRate)) Hz but the output device runs at \(Int(deviceRate)) Hz; using \(Int(deviceRate))")
+                asbd.mSampleRate = deviceRate
+            }
+            guard let format = AVAudioFormat(streamDescription: &asbd) else {
+                throw CoreAudioSupport.Failure(what: "Reading the tap format", status: -1)
+            }
             let aggregate: [String: Any] = [
                 kAudioAggregateDeviceNameKey: "Murmur Meeting Capture",
                 kAudioAggregateDeviceUIDKey: UUID().uuidString,
@@ -326,8 +384,14 @@ final class SystemAudioCapture {
                 "Creating the capture device")
             aggregateID = device
 
-            let url = directory.appendingPathComponent("system-\(segments.count).caf")
+            // Numbered separately from `segments`, which drops silent pieces,
+            // so a kept silent file is never overwritten by the next one.
+            let url = directory.appendingPathComponent("system-\(fileCounter).caf")
+            fileCounter += 1
             let writer = try DownsamplingWriter(url: url, inputFormat: format)
+            self.writer = writer
+            let meter = self.meter
+            meter.sampleRate = format.sampleRate
             queue.sync { segmentPeak = 0 }
 
             // With a dispatch queue the block runs there, not on the real-time
@@ -340,6 +404,7 @@ final class SystemAudioCapture {
                             pcmFormat: format, bufferListNoCopy: input, deallocator: nil)
                     else { return }
                     self?.trackPeak(buffer)
+                    meter.record(buffer)
                     writer.write(buffer)
                 }, "Starting system audio capture")
             procID = proc
@@ -347,6 +412,19 @@ final class SystemAudioCapture {
 
             segments.append(AudioSegment(url: url, offset: Date().timeIntervalSince(startedAt)))
             segmentOpen = true
+            let source: String
+            if browser != nil {
+                let ids = CoreAudioSupport.processes()
+                    .filter { tappedProcesses.contains($0.objectID) }
+                    .map { "\($0.bundleID) (pid \($0.pid))" }
+                source = ids.isEmpty
+                    ? "WARNING no \(browser?.name ?? "browser") audio processes found, tap hears nothing"
+                    : "only \(ids.joined(separator: ", "))"
+            } else {
+                source = "all apps except Murmur"
+            }
+            diagnostics.note(
+                "[others] segment \(segments.count - 1) opened: output \(CoreAudioSupport.defaultOutputDescription()), \(Int(format.sampleRate)) Hz × \(format.channelCount) ch, from \(source) → \(url.lastPathComponent)")
         } catch {
             closeSegment()
             throw error
@@ -378,9 +456,20 @@ final class SystemAudioCapture {
         tapID = AudioObjectID(kAudioObjectUnknown)
         // Let any write still queued finish before the file is let go.
         let silent = queue.sync { segmentPeak <= Self.silence }
-        if segmentOpen, silent, let last = segments.popLast() {
-            try? FileManager.default.removeItem(at: last.url)
+        if segmentOpen {
+            let stats = meter.takeSegment()
+            var line = "[others] segment \(segments.count - 1) closed: \(LevelMeter.describe(stats, sampleRate: meter.sampleRate))"
+            if let writer, writer.failures > 0 {
+                line += " — WARNING \(writer.failures) write failures, last: \(writer.lastFailure ?? "?")"
+            }
+            if silent { line += " — all silent, skipped (file kept as \(segments.last?.url.lastPathComponent ?? "?"))" }
+            diagnostics.note(line)
         }
+        // Silent segments are kept on disk for diagnosis but not transcribed.
+        if segmentOpen, silent, let last = segments.popLast() {
+            silentSegments.append(last)
+        }
+        writer = nil
         segmentOpen = false
     }
 
@@ -390,7 +479,10 @@ final class SystemAudioCapture {
         var addr = CoreAudioSupport.address(kAudioHardwarePropertyProcessObjectList)
         let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             MainActor.assumeIsolated {
-                guard let self, self.browserProcesses() != self.tappedProcesses else { return }
+                guard let self else { return }
+                let now = self.browserProcesses()
+                guard now != self.tappedProcesses else { return }
+                self.diagnostics.note("[others] browser audio processes changed: \(self.tappedProcesses.count) → \(now.count)")
                 self.restartSegment(because: "browser audio processes changed")
             }
         }
