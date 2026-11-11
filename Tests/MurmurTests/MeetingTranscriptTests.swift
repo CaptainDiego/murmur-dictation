@@ -110,4 +110,18 @@ struct MeetWindowTests {
             #expect(MeetingTranscript.removeFillers(input) == expected)
         }
     }
+
+    @Test("Echo removal drops repeated phrases but keeps lines that only share common words")
+    func echoNeedsMatchingPhrases() {
+        let theirs = [
+            Utterance(speaker: .others, start: 27, end: 30, text: "How does the transcription stay private? Does anything leave the laptop?"),
+            Utterance(speaker: .others, start: 0, end: 50, text: "Yeah so the thing is we do a lot of work and it's yeah, like the website is on Shopify so yeah"),
+        ]
+        let mine = [
+            Utterance(speaker: .me, start: 28, end: 29, text: "How does the transcription stay private? Does anything leave the laptop?"),
+            Utterance(speaker: .me, start: 10, end: 14, text: "So you just like have all your employees in house like full time?"),
+        ]
+        let kept = MeetingTranscript.removeEcho(from: mine, heardFrom: theirs)
+        #expect(kept.map(\.start) == [10])
+    }
 }

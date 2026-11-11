@@ -75,12 +75,17 @@ enum MeetingTranscript {
                     overlaps($0, utterance, window: window) && wordList($0.text) == words && !words.isEmpty
                 }
             }
+            // Compare word pairs, not single words: a real echo repeats
+            // phrases in order, while two people talking over each other
+            // share plenty of single words ("yeah", "the", "so") and that
+            // used to throw away the user's own lines.
             var heard = Set<String>()
             for other in others where overlaps(other, utterance, window: window) {
-                heard.formUnion(wordList(other.text))
+                heard.formUnion(pairs(wordList(other.text)))
             }
-            let matched = words.filter(heard.contains).count
-            return Double(matched) / Double(words.count) < threshold
+            let mine = pairs(words)
+            let matched = mine.filter(heard.contains).count
+            return Double(matched) / Double(mine.count) < threshold
         }
     }
 
@@ -236,6 +241,10 @@ enum MeetingTranscript {
     private static func endsSentence(_ text: String) -> Bool {
         guard let last = text.trimmingCharacters(in: .whitespaces).last else { return false }
         return ".?!".contains(last)
+    }
+
+    private static func pairs(_ words: [String]) -> [String] {
+        zip(words, words.dropFirst()).map { "\($0) \($1)" }
     }
 
     static func wordList(_ text: String) -> [String] {
