@@ -414,6 +414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .preparing(let message): return message
         case .ready:
             if meetingIsRecording { return "Recording meeting…" }
+            if meetings.pendingTranscripts > 0 { return "Writing meeting transcript…" }
             return "Ready · \(Settings.shared.trigger.display)"
         case .listening: return "Listening…"
         case .transcribing: return "Transcribing…"
@@ -563,7 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func copyFromHistory(_ sender: NSMenuItem) {
         guard history.items.indices.contains(sender.tag) else { return }
-        NSPasteboard.general.clearContents()
+        NSPasteboard.general.prepareForNewContents(with: .currentHostOnly)
         NSPasteboard.general.setString(history.items[sender.tag], forType: .string)
     }
 

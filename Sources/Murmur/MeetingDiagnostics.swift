@@ -37,7 +37,7 @@ final class MeetingDiagnostics: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         handle?.write(Data(line.utf8))
-        osLog.info("\(message, privacy: .public)")
+        osLog.info("\(message, privacy: .private)")
     }
 
     /// "+01:02:03.4" style offset into the meeting.

@@ -140,6 +140,7 @@ final class Settings {
         static let historySize = "historySize"
         static let meetingOffers = "meetingOffers"
         static let removeFillers = "removeFillers"
+        static let keepRecordings = "keepRecordings"
     }
 
     private init() {
@@ -158,6 +159,7 @@ final class Settings {
             Key.historySize: 5,
             Key.meetingOffers: true,
             Key.removeFillers: true,
+            Key.keepRecordings: false,
         ])
     }
 
@@ -233,6 +235,14 @@ final class Settings {
     var removeFillers: Bool {
         get { defaults.bool(forKey: Key.removeFillers) }
         set { defaults.set(newValue, forKey: Key.removeFillers) }
+    }
+
+    /// Whether each meeting's audio, log and raw transcripts are kept in
+    /// Recordings/ (for two weeks) after the transcript is written. Off:
+    /// the transcript is the only file left.
+    var keepRecordings: Bool {
+        get { defaults.bool(forKey: Key.keepRecordings) }
+        set { defaults.set(newValue, forKey: Key.keepRecordings) }
     }
 
     /// Where meeting transcripts are saved as Markdown.

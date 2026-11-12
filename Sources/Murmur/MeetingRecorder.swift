@@ -28,10 +28,16 @@ enum MeetingStopReason: Sendable {
 /// or from the alert shown when they join a Google Meet. A recording tied
 /// to a Meet call stops by itself shortly after they leave it.
 ///
-/// For diagnosis, the raw audio of each side, an event log and the raw
-/// (pre-merge) transcripts are kept next to the Markdown file in
-/// `Recordings/<same name>/`, so missing parts can be traced to either the
-/// capture or the transcription. Folders older than two weeks are deleted.
+/// Once the transcript is written, the audio, the event log and every other
+/// working file are deleted: the Markdown file is the only thing left.
+///
+/// Two exceptions, both under `Murmur Meetings/Recordings/` and deleted
+/// after two weeks:
+/// - "Keep recordings for troubleshooting" in Settings (off by default)
+///   keeps each recording's audio, log and raw transcripts, so missing
+///   parts can be traced and re-transcribed (`Murmur --retranscribe`).
+/// - A recording that fails to transcribe, or was cut short by a crash, is
+///   kept so the meeting is not lost; the menu says where it is.
 @MainActor
 final class MeetingRecorder {
     private struct Session {
@@ -81,14 +87,23 @@ final class MeetingRecorder {
     init(transcriber: Transcriber) {
         self.transcriber = transcriber
         // Anything still here is from a recording that never finished (a
-        // crash or force quit). Keep it with the others for diagnosis.
+        // crash or force quit): keep it so the meeting isn't lost.
         let fm = FileManager.default
         let kept = Settings.shared.meetingsFolder.appendingPathComponent("Recordings", isDirectory: true)
-        for leftover in (try? fm.contentsOfDirectory(at: Self.scratchFolder, includingPropertiesForKeys: nil)) ?? [] {
-            try? fm.createDirectory(at: kept, withIntermediateDirectories: true)
-            try? fm.moveItem(at: leftover, to: kept.appendingPathComponent("Unfinished \(leftover.lastPathComponent)"))
+        let leftovers = [Self.scratchFolder, Self.legacyScratchFolder].flatMap {
+            ((try? fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? [])
+                .filter { !$0.lastPathComponent.hasPrefix(".") }
         }
-        try? fm.removeItem(at: Self.scratchFolder)
+        for leftover in leftovers where !Self.isOwnedByLiveProcess(leftover) {
+            try? fm.createDirectory(at: kept, withIntermediateDirectories: true)
+            let target = kept.appendingPathComponent("Unfinished \(leftover.lastPathComponent)")
+            if (try? fm.moveItem(at: leftover, to: target)) != nil {
+                fm.createFile(atPath: target.appendingPathComponent(MeetingJob.marker).path, contents: nil)
+            }
+        }
+        try? fm.removeItem(at: Self.legacyScratchFolder)
+        MeetingJob.removeScratchFolderIfEmpty(Self.scratchFolder)
+        MeetingJob.pruneKeptRecordings(in: kept)
         offerAlert.onStart = { [weak self] in self?.acceptOffer() }
         offerAlert.onDecline = { [weak self] in self?.declineOffer() }
         watcher.onSignal = { [weak self] signal in self?.handle(signal) }
@@ -195,8 +210,41 @@ final class MeetingRecorder {
     var meetingFolder: URL { Settings.shared.meetingsFolder }
 
     /// Where audio waits to be transcribed, one subfolder per recording.
-    private static let scratchFolder = FileManager.default.temporaryDirectory
+    /// Inside ~/Documents, which macOS guards with a permission prompt, so
+    /// other apps can't quietly read a call in progress (the temp folder has
+    /// no such protection). Hidden, readable only by this user, named
+    /// `.nosync` so iCloud Drive never uploads it, and kept out of Time
+    /// Machine and Spotlight.
+    static var scratchFolder: URL {
+        Settings.shared.meetingsFolder.appendingPathComponent(".recording.nosync", isDirectory: true)
+    }
+    /// Where 1.4.1 and earlier kept it; checked for leftovers once.
+    private static let legacyScratchFolder = FileManager.default.temporaryDirectory
         .appendingPathComponent("MurmurMeetings", isDirectory: true)
+
+    private static func prepareScratchFolder() throws {
+        let fm = FileManager.default
+        var folder = scratchFolder
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? folder.setResourceValues(values)
+        let neverIndex = folder.appendingPathComponent(".metadata_never_index")
+        if !fm.fileExists(atPath: neverIndex.path) { fm.createFile(atPath: neverIndex.path, contents: nil) }
+    }
+
+    /// Each recording folder names the process recording into it, so a
+    /// second copy of Murmur starting up never mistakes it for a leftover.
+    private static let ownerFile = "owner.pid"
+
+    private static func isOwnedByLiveProcess(_ folder: URL) -> Bool {
+        guard let text = try? String(contentsOf: folder.appendingPathComponent(ownerFile), encoding: .utf8),
+            let pid = pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+            pid != ProcessInfo.processInfo.processIdentifier
+        else { return false }
+        return kill(pid, 0) == 0
+    }
 
     /// "Start Meeting Transcript" in the menu. If a Meet call is live right
     /// now, the recording is tied to it and ends when the user leaves.
@@ -223,7 +271,11 @@ final class MeetingRecorder {
         let startedAt = Date()
         let directory = Self.scratchFolder.appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Self.prepareScratchFolder()
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try String(ProcessInfo.processInfo.processIdentifier)
+                .write(to: directory.appendingPathComponent(Self.ownerFile), atomically: true, encoding: .utf8)
         } catch {
             lastError = "Couldn't create a recording folder: \(error.localizedDescription)"
             return
@@ -323,11 +375,24 @@ final class MeetingRecorder {
                 case .success(let url):
                     self.lastTranscript = url
                 case .failure(let error):
+                    let saved = (error as? MeetingJobFailure)?.keptAt != nil
                     self.lastError =
-                        "Meeting transcript failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)"
+                        "Meeting transcript failed: \((error as? LocalizedError)?.errorDescription ?? error.localizedDescription). "
+                        + (saved
+                            ? "The audio is saved in Murmur Meetings › Recordings."
+                            : "The audio could not be saved.")
                 }
             }
         }
+    }
+}
+
+/// A failed transcript, and where its audio was kept (nil: it couldn't be).
+private struct MeetingJobFailure: LocalizedError {
+    let underlying: Error
+    let keptAt: URL?
+    var errorDescription: String? {
+        (underlying as? LocalizedError)?.errorDescription ?? underlying.localizedDescription
     }
 }
 
@@ -346,15 +411,38 @@ private struct MeetingJob: Sendable {
     let outputFolder: URL
     let modelLabel: String
     var removeFillers = Settings.shared.removeFillers
+    /// Keep audio and logs after a successful transcript (Settings).
+    var keepRecording = Settings.shared.keepRecordings
     /// False when re-transcribing a folder that is already kept.
     var moveRecording = true
     /// Overrides the transcript's file name.
     var outputName: String?
 
+    /// Writes the transcript, then deletes the recording folder, or keeps
+    /// it when asked for or when the transcript failed, so the meeting
+    /// isn't lost. Otherwise nothing but the Markdown file remains.
     func run(with transcriber: Transcriber) async -> Result<URL, Error> {
+        let result = await write(with: transcriber)
+        guard moveRecording else { return result }
         let base = fileBaseName(meetTitle == nil ? "Meeting" : "Google Meet")
         let keptAt = outputFolder.appendingPathComponent("Recordings", isDirectory: true)
-        defer { if moveRecording { keep(in: keptAt, name: base) } }
+        switch result {
+        case .success:
+            if keepRecording {
+                _ = keep(in: keptAt, name: base)
+            } else {
+                try? FileManager.default.removeItem(at: directory)
+            }
+            Self.removeScratchFolderIfEmpty(directory.deletingLastPathComponent())
+            return result
+        case .failure(let error):
+            let kept = keep(in: keptAt, name: base)
+            Self.removeScratchFolderIfEmpty(directory.deletingLastPathComponent())
+            return .failure(MeetingJobFailure(underlying: error, keptAt: kept))
+        }
+    }
+
+    private func write(with transcriber: Transcriber) async -> Result<URL, Error> {
         do {
             // The model may still be loading if Murmur was just launched.
             for _ in 0..<300 where await !transcriber.isReady {
@@ -457,7 +545,18 @@ private struct MeetingJob: Sendable {
     }
 
     /// Moves the recording folder next to the transcripts and prunes old ones.
-    private func keep(in folder: URL, name: String) {
+    /// The hidden scratch folder holds only its Spotlight marker once no
+    /// recording is in it; remove it so nothing is left behind.
+    static func removeScratchFolderIfEmpty(_ folder: URL) {
+        let fm = FileManager.default
+        let entries = (try? fm.contentsOfDirectory(atPath: folder.path)) ?? []
+        if entries.allSatisfy({ $0 == ".metadata_never_index" || $0 == ".DS_Store" }) {
+            try? fm.removeItem(at: folder)
+        }
+    }
+
+    /// Returns where the folder went, or nil if it couldn't be moved.
+    private func keep(in folder: URL, name: String) -> URL? {
         let fm = FileManager.default
         do {
             try fm.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -469,14 +568,35 @@ private struct MeetingJob: Sendable {
             }
             diagnostics.note("audio and logs kept in \(target.path)")
             try fm.moveItem(at: directory, to: target)
+            fm.createFile(atPath: target.appendingPathComponent(Self.marker).path, contents: nil)
+            try? fm.removeItem(at: target.appendingPathComponent(Self.ownerFile))
+            Self.pruneKeptRecordings(in: folder)
+            return target
         } catch {
             NSLog("Murmur: couldn't keep meeting recording — \(error.localizedDescription)")
+            Self.pruneKeptRecordings(in: folder)
+            return nil
         }
+    }
+
+    private static let ownerFile = "owner.pid"
+
+    /// Marks a folder as one Murmur kept, so pruning never touches anything else.
+    static let marker = ".murmur-recording"
+
+    /// Deletes kept recordings older than two weeks.
+    static func pruneKeptRecordings(in folder: URL) {
+        let fm = FileManager.default
         let cutoff = Date().addingTimeInterval(-14 * 24 * 3600)
         for old in (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.creationDateKey])) ?? [] {
+            guard fm.fileExists(atPath: old.appendingPathComponent(marker).path) else { continue }
             if let created = try? old.resourceValues(forKeys: [.creationDateKey]).creationDate, created < cutoff {
                 try? fm.removeItem(at: old)
             }
+        }
+        // An empty Recordings folder is left over clutter.
+        if (try? fm.contentsOfDirectory(atPath: folder.path))?.isEmpty == true {
+            try? fm.removeItem(at: folder)
         }
     }
 
@@ -559,9 +679,10 @@ enum Retranscribe {
             directory: folder.appendingPathComponent("retranscribe", isDirectory: true),
             micSegments: segments("mic-"), systemSegments: segments("system-"),
             systemWasSilent: false, diagnostics: diagnostics, micProblem: nil,
-            outputFolder: folder, modelLabel: Settings.shared.model.label)
+            outputFolder: folder.deletingLastPathComponent().deletingLastPathComponent(),
+            modelLabel: Settings.shared.model.label)
         job.moveRecording = false
-        job.outputName = "retranscribed"
+        job.outputName = "\(folder.lastPathComponent) (retranscribed)"
 
         Task {
             defer { done.signal() }

@@ -11,6 +11,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     private let historyPopup = NSPopUpButton()
     private let soundsCheckbox = NSButton(checkboxWithTitle: "Play a sound when recording starts", target: nil, action: nil)
     private let meetingOffersCheckbox = NSButton(checkboxWithTitle: "Ask to transcribe when I join a Google Meet", target: nil, action: nil)
+    private let keepRecordingsCheckbox = NSButton(checkboxWithTitle: "Keep meeting audio and logs for troubleshooting (deleted after 14 days)", target: nil, action: nil)
     private let fillersCheckbox = NSButton(checkboxWithTitle: "Leave out “uh” and “um” in meeting transcripts", target: nil, action: nil)
     private let loginCheckbox = NSButton(checkboxWithTitle: "Launch Murmur at login", target: nil, action: nil)
     private let micStatusLabel = NSTextField(labelWithString: "")
@@ -163,6 +164,10 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         fillersCheckbox.action = #selector(fillersChanged)
         stack.addArrangedSubview(fillersCheckbox)
 
+        keepRecordingsCheckbox.target = self
+        keepRecordingsCheckbox.action = #selector(keepRecordingsChanged)
+        stack.addArrangedSubview(keepRecordingsCheckbox)
+
         loginCheckbox.target = self
         loginCheckbox.action = #selector(loginChanged)
         stack.addArrangedSubview(loginCheckbox)
@@ -241,6 +246,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         soundsCheckbox.state = settings.playSounds ? .on : .off
         meetingOffersCheckbox.state = settings.meetingOffers ? .on : .off
         fillersCheckbox.state = settings.removeFillers ? .on : .off
+        keepRecordingsCheckbox.state = settings.keepRecordings ? .on : .off
         loginCheckbox.state = LoginItem.isEnabled ? .on : .off
         refreshPermissions()
     }
@@ -311,6 +317,10 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func soundsChanged() {
         Settings.shared.playSounds = soundsCheckbox.state == .on
+    }
+
+    @objc private func keepRecordingsChanged() {
+        Settings.shared.keepRecordings = keepRecordingsCheckbox.state == .on
     }
 
     @objc private func fillersChanged() {
