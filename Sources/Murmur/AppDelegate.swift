@@ -1,3 +1,4 @@
+import AudioToolbox
 import AppKit
 import AVFoundation
 import ServiceManagement
@@ -30,6 +31,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var recordingStartedAt: Date?
     /// Guards against a release arriving after we already stopped.
     private var isCapturing = false
+    /// The mic is being started (asynchronously); a release that lands in
+    /// this window must still end the dictation once it's up.
+    private var isStarting = false
+    private var releasedWhileStarting = false
     /// Accessibility is only checked at launch; if the user grants it
     /// afterwards in System Settings, nothing tells Murmur. This retries
     /// quietly until it notices, then stops itself.
@@ -219,6 +224,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func handleRelease() {
         guard Settings.shared.activationMode == .hold else { return }
+        if isStarting && !isCapturing {
+            releasedWhileStarting = true
+            return
+        }
         guard isCapturing else { return }
 
         // Ignore an accidental brush of the key.
@@ -237,10 +246,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Dictation
 
     private func startCapture() {
-        guard !isCapturing else { return }
+        guard !isCapturing, !isStarting else { return }
+        isStarting = true
+        releasedWhileStarting = false
 
         Task { [weak self] in
             guard let self else { return }
+            defer { self.isStarting = false }
             let ready = await self.transcriber.isReady
             guard ready else {
                 self.flash("Model is still loading")
@@ -257,6 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.recordingStartedAt = Date()
                 self.state = .listening
                 self.playSound(.start)
+                if self.releasedWhileStarting { self.handleRelease() }
             } catch {
                 self.report(error)
             }
@@ -317,18 +330,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Feedback
 
-    private enum Chime { case start, stop, done }
+    private enum Chime: String { case start = "Tink", stop = "Pop", done = "Morse" }
+    private var chimeSounds: [Chime: SystemSoundID] = [:]
 
+    /// Plays as a system sound rather than with NSSound, for two reasons:
+    /// NSSound(named:) is one shared instance that silently refuses to play
+    /// again while it's still playing (Pop lasts 1.6 s), and system sounds go
+    /// to the "Play sound effects through" device. The main output can be an
+    /// S/PDIF or USB DAC that sleeps when idle and swallows the first half
+    /// second after waking, which is the whole start chime.
     private func playSound(_ chime: Chime) {
-        guard Settings.shared.playSounds else { return }
-        let name: String
-        switch chime {
-        case .start: name = "Tink"
-        case .stop: name = "Pop"
-        case .done: name = "Morse"
+        guard Settings.shared.playSounds, chime != .done else { return }  // the paste itself confirms
+        if chimeSounds[chime] == nil {
+            let url = URL(fileURLWithPath: "/System/Library/Sounds/\(chime.rawValue).aiff")
+            var id: SystemSoundID = 0
+            guard AudioServicesCreateSystemSoundID(url as CFURL, &id) == noErr else { return }
+            chimeSounds[chime] = id
         }
-        if chime == .done { return }  // the paste itself is the confirmation
-        NSSound(named: name)?.play()
+        if let id = chimeSounds[chime] { AudioServicesPlaySystemSound(id) }
     }
 
     private func report(_ error: Error) {
